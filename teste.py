@@ -4,31 +4,38 @@ import re
 # Configuração da página
 st.set_page_config(page_title="Extrator Judiciário", layout="wide")
 
-def tratar_multiplos_nomes(nome_bruto):
+def tratar_nomes_judiciais(texto_nomes, sufixo_tipo):
     """
-    Mantém apenas o primeiro nome e adiciona 'E OUTROS' 
-    se houver vírgulas ou indicadores de multiplicidade.
+    Identifica se há múltiplos nomes baseados na repetição de '- RECLAMANTE' ou '- RECLAMADO'
     """
-    nome_limpo = nome_bruto.strip().upper()
+    # Procura por todos os nomes que vêm antes do traço identificador
+    # Ex: Captura 'NOME' em 'NOME - RECLAMADO'
+    padrao_nome = rf"(.*?)\s*-\s*{sufixo_tipo}"
+    achados = re.findall(padrao_nome, texto_nomes, re.IGNORECASE)
     
-    # Se houver vírgula ou ponto e vírgula, indica múltiplos nomes
-    if ',' in nome_limpo or ';' in nome_limpo:
-        # Pega tudo antes da primeira vírgula/ponto e vírgula
-        primeiro_nome = re.split(r'[,;]', nome_limpo)[0].strip()
+    if not achados:
+        return "NÃO IDENTIFICADO"
+    
+    primeiro_nome = achados[0].strip().upper()
+    
+    # Se houver mais de um item na lista, adiciona 'E OUTROS'
+    if len(achados) > 1:
         return f"{primeiro_nome} E OUTROS"
     
-    return nome_limpo
+    return primeiro_nome
 
 def extrair_dados_pauta_judicial(texto_pauta):
-    # Regex ajustado para ser um pouco mais flexível na captura dos blocos
-    padrao = r"(\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4})/SP.*?Autor\s+(.*?)\s*-\s*RECLAMANTE.*?X.*?Réu\s+(.*?)\s*-\s*RECLAMADO"
-    blocos = re.findall(padrao, texto_pauta, re.DOTALL)
+    # Regex atualizado para capturar o BLOCO INTEIRO de autores e réus
+    # Ele pega tudo entre 'Autor' e 'X', e entre 'Réu' e o próximo processo (ou fim do texto)
+    padrao_bloco = r"(\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4})/SP.*?Autor\s+(.*?)\s+X\s+Réu\s+(.*?)(?=\d{7}-\d{2}\.\d{4}|\Z)"
+    
+    blocos = re.findall(padrao_bloco, texto_pauta, re.DOTALL)
     resultados = []
 
-    for num_processo, nome_ativo, nome_passivo in blocos:
-        # Aplicando a nova lógica de "E OUTROS"
-        requerente = tratar_multiplos_nomes(nome_ativo)
-        requerido = tratar_multiplos_nomes(nome_passivo)
+    for num_processo, bloco_autor, bloco_reu in blocos:
+        # Processa os nomes dentro de cada bloco
+        requerente = tratar_nomes_judiciais(bloco_autor, "RECLAMANTE")
+        requerido = tratar_nomes_judiciais(bloco_reu, "RECLAMADO")
         
         item = (
             f"FEITO N.º - {num_processo}.\n"
@@ -36,6 +43,7 @@ def extrair_dados_pauta_judicial(texto_pauta):
             f"REQUERIDO/RECLAMADO - {requerido}."
         )
         resultados.append(item)
+    
     return "\n\n\n".join(resultados)
 
 def gerar_rtf(texto):
@@ -54,7 +62,7 @@ if st.button("GERAR TEXTO FORMATADO"):
     if texto_entrada.strip():
         resultado = extrair_dados_pauta_judicial(texto_entrada)
         if resultado:
-            st.success("Dados processados com a regra 'E OUTROS'!")
+            st.success("Dados processados com sucesso!")
             st.text_area("PRÉ-VISUALIZAÇÃO:", value=resultado, height=300)
             dados_rtf = gerar_rtf(resultado)
             st.download_button(
@@ -64,6 +72,6 @@ if st.button("GERAR TEXTO FORMATADO"):
                 mime="application/rtf"
             )
         else:
-            st.error("Padrão não encontrado. Verifique se o texto colado contém as marcações RECLAMANTE/RECLAMADO.")
+            st.error("Não foi possível encontrar o padrão de processo. Verifique a formatação.")
     else:
         st.warning("O campo está vazio.")
